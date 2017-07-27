@@ -1,6 +1,7 @@
 # hxcss
 CSS2 and CSS3 parser written in Haxe (for cross-platform compatibility)
 
+_Based on [Rework's css parser](https://github.com/reworkcss/css)_
 
 ### Usage
 Parse a css string:
@@ -85,14 +86,14 @@ All nodes have the following properties.
 Information about the position in the source string that corresponds to
 the node.
 
-`Object`:
+`Map<String, T>` =>
 
-- start: `Object`:
-  - line: `Number`.
-  - column: `Number`.
-- end: `Object`:
-  - line: `Number`.
-  - column: `Number`.
+- start => `Map<String, T>`
+  - line => `Number`.
+  - column => `Number`.
+- end => `Map<String, T>`:
+  - line => `Number`.
+  - column => `Number`.
 - source: `String` or `null`. The value of `options.source` if passed to
   `hxcss.Parser.parse`. Otherwise `null`.
 - content: `String`. The full source string passed to `hxcss.Parser.parse`.
