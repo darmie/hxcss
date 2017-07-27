@@ -1,4 +1,5 @@
 package hxcss;
+import haxe.Json;
 import haxe.ds.StringMap;
 using StringTools;
 /**
@@ -183,7 +184,7 @@ class Parser
 
 		// declarations
 		var decl = declaration();
-		trace(decl);
+		
 	
 		
 			for (v in decl.keys()){
@@ -676,48 +677,57 @@ class Parser
 	}
 	
 	
-	public static function addParent(obj:StringMap<Dynamic>, ?parent:StringMap<Dynamic>):Dynamic{
-		var isNode:Bool = obj != null && Std.is(obj.get("type"), String);
-		var childParent = isNode != false ? obj : parent;
+	public static function addParent(obj:Dynamic, ?parent:StringMap<Dynamic>):Dynamic{
 
-			for (key in obj.keys()){
-						
-				var value = obj.get(key);
-				
-				if(Std.is(value, Array)){
-					var _value:Array<StringMap<Dynamic>> = value;
-					
-					for(v in _value){
-						
-						Parser.addParent(v, childParent);
-					}
-				}else if(value != null && Std.is(value, StringMap)){
-					Parser.addParent(value, childParent);
+		var isNode:Bool = obj != null;
+		if (Std.is(obj, StringMap) == false){
+			isNode = false;
+		}else if (obj != null && Std.is(obj, StringMap)){
+			var obj = cast(obj, StringMap<Dynamic>);
+			if(obj.exists("type"))
+				isNode = true;
+				if (obj.get("type") == "stylesheet"){
+					return obj;
 				}
-				
-				trace(obj);
+		}
+
+		var childParent = isNode != false ? obj : parent;
+		if (Std.is(obj, StringMap)){
+			var obj = cast(obj, StringMap<Dynamic>);
+			for (key in obj.iterator()){
+							
+					var value = obj.get(key);
+					
+					if(Std.is(value, Array)){
+						var _value:Array<Dynamic> = value;
+						
+						for (i in 0..._value.length){
+							var v = _value[i];
+							Parser.addParent(v, childParent);	
+						}
+					}else if(value != null && Std.is(value, StringMap)){
+						Parser.addParent(value, childParent);
+					}
+					//trace(obj);
 			}
 			
-			if (isNode){
-
+			if(isNode == true && parent != null){
 				obj.set("parent", parent);
-				
 			}
-			
-			
+		}
 		
-
+		
 	  	return obj;
             
 	}
 	
 	public static function parse(css: String, options: StringMap<Dynamic>):StringMap<Dynamic> 
 	{
-		var _css = Parser.addParent((new Parser(css, options)).stylesheet());
-
+		var _css:StringMap<Dynamic> = Parser.addParent((new Parser(css, options)).stylesheet());
 		return _css;
 
 	}
+	
 	
 	
 
