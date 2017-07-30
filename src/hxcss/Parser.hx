@@ -8,724 +8,443 @@ using StringTools;
  */
 class Parser
 {
-	public var css:String;
+	public var source:String;
 	public var options:StringMap<Dynamic>;
 	
-	public static var commentre:EReg = ~/\/\*[^*]*\*+([^\/*][^*]*\*+)*\//g;
+    private var importStatements:Array<Dynamic> = [];
+    private var keyframeStatements:Array<Dynamic> = [];	
+	
+	private var cssRegex:EReg = ~/([\s\S]*?){([\s\S]*?)*}/ig;
+	private var mediaQueryRegex:String = "@media([\\s\\S]*?){([\\s\\S]*?}\\s*?)}";
+	private var keyframeRegex:String = "((@.*?keyframes [\\s\\S]*?){([\\s\\S]*?}\\s*?)})";
+	private var combinedCSSRegex:String = "(((\\s*?(?:\\/\\*[\\s\\S]*?\\*\\/)?\\s*?@media[\\s\\S]*?){([\\s\\S]*?)}\\s*?})|(([\\s\\S]*?){([\\s\\S]*?)*}))";
+	private var commentRegex:String = "\\/\\*[\\s\\S]*?\\*\\/";
+	private var importRegex:EReg = new EReg('@import .*?;', 'ig');
+	
 
-	/**
-	 * Positional.
-	 */
-
-	public var lineno:Int = 1;
-	public var column:Int = 1;
-
-	public function new(css:String, options:StringMap<Dynamic>)
+	public function new(source:String, options:StringMap<Dynamic>)
 	{
-		this.css = css;
+		this.source = source;
 		if (options != null)
 		{
 			this.options = options;
 		}
 		else
 		{
-			this.options = new StringMap();
+			this.options = new StringMap<Dynamic>();
 		}
 
 	}
-	/**
-	 * Match `re` and return captures.
-	 */
-	private function match(re:EReg):String
+	
+  /*
+    Strip outs css comments and returns cleaned css string
+    @param css, the original css string to be stipped out of comments
+    @return cleanedCSS contains no css comments
+  */
+	
+	public function stripComments(css:String):String
 	{
-		var m = re.match(css);
-		if (!m)
-		{
-			return null;
-		}
-
-		var str = re.matched(0);
-		updatePosition(str);
-        
-		css = css.split("").slice(str.length).join("");
-		return re.matched(0);
-	}
-
-	/**
-	 * Mark position and patch `node.position`.
-	 */
-
-	private function position():StringMap<Dynamic>
-	{
-		var start:StringMap<Dynamic> = [ "line" => lineno, "column" => column ];
-
+		var regex = new EReg(this.commentRegex, 'ig');
 		
-		return start;
+		return regex.replace(css, '');
 	}
 	
-	private function pos(node:StringMap<Dynamic>, start:StringMap<Dynamic>):StringMap<Dynamic>
-	{
+  /*
+    parses given string containing css directives
+    and returns an array of objects containing ruleName:ruleValue pairs
+    @param rules, css directive string example
+        \n\ncolor:white;\n    font-size:18px;\n
+  */
 		
-		node.set("position",  (new Position(start, this)).toMap());
-		whitespace();
-		return node;
-	}	
-	
-	
-	
-
-	/**
-	 * Parse whitespace.
-	 */
-
-	private function whitespace():Void
+	public function parseRules(rules:String):Array<StringMap<Dynamic>>
 	{
-		match(~/\s*/);
-	}
-
-	/**
-	 * Parse comment.
-	 */
-
-	private function comment():StringMap<Dynamic>
-	{
-		var start = position();
-		if ('/' != css.charAt(0) || '*' != css.charAt(1)) return null;
-
-		var i = 2;
-		while ("" != css.charAt(i) && ('*' != css.charAt(i) || '/' != css.charAt(i + 1))) ++i;
-		i += 2;
-
-		if ("" == css.charAt(i-1))
-		{
-			throw error('End of comment missing');
-		}
-
-		var str = css.split("").slice(2, i - 2).join("");
-		column += 2;
-		updatePosition(str);
-		css = css.split("").slice(i).join("");
-		column += 2;
-
-		return pos(
-			[
-				"type" => 'comment',
-				"comment" => str
-			], start);
-	}
-
-	/**
-	 * Parse comments;
-	 */
-
-	private function comments(?rules:Array<StringMap<Dynamic>>):Array<StringMap<Dynamic>>
-	{
-		var c = comment();
-		var _rules = [];
-		if (rules != null)
-		{
-			_rules = rules;
-		}
-		if (c != null)
-		{
-			_rules.push(c);
+		//convert all windows style line endings to unix style line endings
+		rules = rules.split('\r\n', '\n');
+		var ret:Array<StringMap<Dynamic>> = [];
+		
+		
+		rules = rules.split(';');
+		
+		//proccess rules line by line
+		
+		for (i in 0...rules.length){
+			
+			var line = rules.charAt(i);
+			
+			//determine if line is a valid css directive, ie color:white;
+			line = line.trim();
+			if (line.indexOf(':') != -1) {
+				//line contains :
+				line = line.split(':');
+				var directive:String = line.charAt(0).trim();
+				var value = line.split("").slice(1).join(':').trim();
+				
+				//more checks
+				if(directive.length < 1 || value.length < 1){
+					continue; //there is no css directive or value that is of length 1 or 0
+					// PLAIN WRONG WHAT ABOUT margin:0; ?
+				}
+				
+				//push rule
+				ret.push([
+					"directive" => directive,
+					"value" => value
+				]);
+			}else{
+				//if there is no ':', but what if it was mis splitted value which starts with base64
+				 if (line.trim().substr(0, 7) == 'base64,') { //hack :)
+					 var _line += line.trim();
+					 ret[ret.length -1].set("value", _line);
+				 }else{
+					 //add rule, even if it is defective
+					 if (line.length > 0) {
+						 ret.push([
+							"directive" => '',
+							"value" => line,
+							"defective" => true
+						 ]);
+					 }
+				 }
+			}
 		}
 		
-		return _rules;
+		return ret; //we are done !
 	}
 	
-	/**
-	 * Parse declaration.
-	 */
-
-	private function declaration():StringMap<Dynamic> 
+  /*
+    just returns the rule having given directive
+    if not found returns false;
+  */
+	public function findCorrespondingRule(rules:Array<StringMap<Dynamic>>, directive:String, value:Dynamic = null):StringMap<Dynamic>
 	{
-		var start = position();
 
-		// prop
-		var prop = match(~/^(\*?[-#\/\*\\\w]+(\[[0-9a-z_-]+\])?)\s*/);
-		if (prop == null) return null;
-		prop = trim(prop);
-		
-
-		// :
-		if (match(~/:\s*/) == null) throw error("property missing ':'");
-
-		// val
-		var val = match(~/^((?:'(?:\\'|.)*?'|"(?:\\"|.)*?"|\([^\)]*?\)|[^};])+)/);
-        var _val = '';
-        
-        if(val != null){
-            _val = Parser.commentre.replace(trim(val), '');
-        }
-
-		var ret = pos([
-		  "type" => 'declaration',
-		  "property" => Parser.commentre.replace(prop, ''),
-		  "value" => _val
-		], start);
-
-		// ;
-		match(~/^[;\s]*/);
-
-		return ret;
-	}
-	
-	  /**
-	   * Parse declarations.
-	   */
-
-	private function declarations():Array<StringMap<Dynamic>> {
-		var decls:Array<StringMap<Dynamic>> = [];
-
-		if (open() == null) throw error("missing '{'");
-		comments(decls);
-		
-
-		// declarations
-		var decl = declaration();
-		
-	
-		
-			for (v in decl.keys()){
-				if(decl.get(v) != null){
-					decls.push(decl);
-					comments(decls);
+		var ret = null;
+		for(i in 0...rules.length){
+			if(rules[i].get("directive") == directive){
+				ret = rules[i];
+				if(value == rules[i].get("value")){
 					break;
 				}
 			}
-		
-
-		if (close() == null) throw error("missing '}'");
-		
-		return decls;
-	}
-	
-	  /**
-	   * Parse selector.
-	   */
-
-	private function selector():Array<String> {
-		var m = match(~/^([^{]+)/);
-		if (m == null) return null;
-		
-		/*Todo: @fix Remove all comments from selectors
-		 * http://ostermiller.org/findcomment.html */		
-		
-        var patt1:EReg = ~/"(?:\\"|[^"])*"|'(?:\\'|[^'])*'/g;
-        var patt2:EReg = ~/\/\*[^*]*\*+([^\/*][^*]*\*+)*\//g;
-		
-		var rem1 = patt1.replace(trim(m), '');
-		var rem2:String = '';
-		if(patt2.match(rem1)){
-			var _rem2 = patt2.matched(0);
-			rem2 = ~/,/g.replace(_rem2, '\x200C');
-		}else{
-			rem2 = rem1;
 		}
-		
-		var rem:Array<String> = ~/\s*(?![^(]*\)),\s*/.split(rem2);
-		var fin:Array<String> = rem.map(function(s){
-			return ~/\x200C/g.replace(s, ',');
-		});
-		return fin;
-	}	
-	
-	  /**
-	   * Parse keyframe.
-	   */
-
-	private function keyframe():StringMap<Dynamic> {
-		var m = match(~/^((\d+\.\d+|\.\d+|\d+)%?|[a-z]+)\s*/);
-		var vals = [];
-		var start = position();
-
-		while(m != null) {
-		  vals.push(m.charAt(1));
-		  match(~/^,\s*/);
-		}
-
-		if (vals.length == 0) return null;
-
-		return pos([
-		  "type" => 'keyframe',
-		  "values" => vals,
-		  "declarations" => declarations()
-		], start);
-	}
-	
-  /**
-   * Parse keyframes.
-   */
-
-	private function atkeyframes():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@([-\w]+)?keyframes\s*/);
-
-		if (m == null) return null;
-		var vendor = m.charAt(1);
-
-		// identifier
-		var m = match(~/^([-\w]+)\s*/);
-		if (m == null) throw error("@keyframes missing name");
-		var name = m.charAt(1);
-
-		if (open() == null) throw error("@keyframes missing '{'");
-
-		var frame = keyframe();
-		var frames = comments();
-		for (f in frame.keys()) {
-			if(frame.get(f) != null){
-			  frames.push(frame);
-			  frames = frames.concat(comments());
-			  break;
-			}
-		}
-
-		if (close() == null) throw error("@keyframes missing '}'");
-
-		return pos([
-		  "type"=> 'keyframes',
-		  "name"=> name,
-		  "vendor"=> vendor,
-		  "keyframes"=> frames
-		], start);
-	}
-	
-  /**
-   * Parse supports.
-   */
-
-	private function atsupports():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@supports *([^{]+)/);
-
-		if (m == null) return null;
-		var supports = trim(m.charAt(1));
-
-		if (open() == null) throw error("@supports missing '{'");
-
-		var style = comments().concat(rules());
-
-		if (close() == null) throw error("@supports missing '}'");
-
-		return pos([
-		  "type" => 'supports',
-		  "supports" => supports,
-		  "rules" => style
-		], start);
-	}
-	
-  /**
-   * Parse host.
-   */
-
-	private function athost():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@host\s*/);
-
-		if (m == null) return null;
-
-		if (open() == null) throw error("@host missing '{'");
-
-		var style = comments().concat(rules());
-
-		if (close() == null) throw error("@host missing '}'");
-
-		return pos([
-		  "type" => 'host',
-		  "rules" => style
-		], start);
-	}
-	
-  /**
-   * Parse media.
-   */
-
-	private function atmedia():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@media *([^{]+)/);
-
-		if (m == null) return null;
-		var media = trim(m.charAt(1));
-
-		if (open() == null) throw error("@media missing '{'");
-
-		var style = comments().concat(rules());
-
-		if (close() == null) throw error("@media missing '}'");
-
-		return pos([
-		  "type" => 'media',
-		  "media" => media,
-		  "rules" => style
-		], start);
-	}
-	
-	  /**
-	   * Parse custom-media.
-	   */
-
-	private function atcustommedia():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@custom-media\s+(--[^\s]+)\s*([^{;]+);/);
-		if (m == null) return null;
-
-		return pos([
-		  "type" => 'custom-media',
-		  "name" => trim(m.charAt(1)),
-		  "media" => trim(m.charAt(2))
-		], start);
-	}
-	
-	  /**
-	   * Parse paged media.
-	   */
-
-	private function atpage():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@page */);
-		if (m == null) return null;
-
-		var sel = selector();
-		if(selector() == null){
-			sel = [];
-		}
-		
-
-		if (open() == null) throw error("@page missing '{'");
-		var decls = comments();
-
-		// declarations
-		var decl:StringMap<Dynamic> = declaration();
-		
-		for(v in decl.keys()){
-			if(decl.get(v) != null){
-				  decls.push(decl);
-				  decls = decls.concat(comments());	
-				  break;
-			}			
-		}
-
-				
-
-		if (close() == null) throw error("@page missing '}'");
-
-		return pos([
-		  "type" => 'page',
-		  "selectors" => sel,
-		  "declarations"=> decls
-		], start);
-	 }
-	 
-	  /**
-	   * Parse document.
-	   */
-
-	 private function atdocument():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@([-\w]+)?document *([^{]+)/);
-		if (m == null) return null;
-
-		var vendor = trim(m.charAt(1));
-		var doc = trim(m.charAt(2));
-
-		if (open() == null) throw error("@document missing '{'");
-
-		var style = comments().concat(rules());
-
-		if (close() == null) throw error("@document missing '}'");
-
-		return pos([
-		  "type" => 'document',
-		  "document" => doc,
-		  "vendor" => vendor,
-		  "rules" => style
-		], start);
-	  }
-	  
-	  /**
-	   * Parse font-face.
-	   */
-
-	  private function atfontface():StringMap<Dynamic> {
-		var start = position();
-		var m = match(~/^@font-face\s*/);
-		if (m == null) return null;
-
-		if (open() == null) throw error("@font-face missing '{'");
-		var decls = comments();
-
-		// declarations
-		var decl = declaration();
-		for(v in decl.keys()){
-			if(decl.get(v) != null){
-				  decls.push(decl);
-				  decls = decls.concat(comments());	
-				  break;
-			}			
-		}
-
-		if (close() == null) throw error("@font-face missing '}'");
-
-		return pos([
-		  "type" => 'font-face',
-		  "declarations" => decls
-		], start);
-	  }
-	  /**
-	   * Parse non-block at-rules
-	   */	  
-	  private function _compileAtrule(name):StringMap<Dynamic> {
-		var re = new EReg('^@' + name + '\\s*([^;]+);', "");
-		  var start = position();
-		  var m = match(re);
-		  if (m == null) return null;
-		  var ret:StringMap<Dynamic> = [ "type" => name ];
-		  ret.set(name, m.charAt(1).trim());
-		  
-		  return pos(ret, start);
-	  }	
-	  
-	  /**
-	   * Parse import
-	   */
-
-	private function atimport():StringMap<Dynamic> { return _compileAtrule('import'); };
-
-	  /**
-	   * Parse charset
-	   */
-
-	private function atcharset():StringMap<Dynamic> { return _compileAtrule('charset'); };
-
-	  /**
-	   * Parse namespace
-	   */
-
-	private function atnamespace():StringMap<Dynamic> { return _compileAtrule('namespace'); };	
-	
-	  /**
-	   * Parse at rule.
-	   */
-
-	private function atrule():StringMap<Dynamic> {
-		if (css.charAt(0) != '@') return null;
-        
-        var ret = null;
-        
-        if(atkeyframes() != null){
-            ret = atkeyframes();
-        }else if(atmedia() != null){
-            ret =atmedia();
-        }else if(atcustommedia() != null){
-            ret =atcustommedia();
-        }else if(atsupports() != null){
-            ret =atsupports();
-        }else if(atimport() != null){
-            ret =atimport();
-        }else if(atcharset() != null){
-            ret =atcharset();
-        }else if(atnamespace() != null){
-            ret =atnamespace();
-        }else if(atdocument() != null){
-            ret =atdocument();
-        }else if(atpage() != null){
-            ret =atpage();
-        }else if(athost() != null){
-            ret =athost();
-        }else if(atfontface() != null){
-            ret = atfontface();
-        }else{
-            return null;
-        }
-        
-		return ret;
-	  }	
-	  
-	  /**
-	   * Parse rule.
-	   */
-
-	  private function rule():StringMap<Dynamic> 
-    {
-		var start = position();
-		var sel = selector();
-
-		if (sel ==null) throw error('selector missing');
-		comments();
-		var ret = pos([
-		  "type" => 'rule',
-		  "selectors" => sel,
-		  "declarations" => declarations()
-		], start);
-		
-		return ret;
-	  }	  
-
-	/**
-	 * Error `msg`.
-	 */
-
-	var errorsList:Array<String> = [];
-
-	private function error(msg):String
-	{
-		var err = options.get("source") + ':' + lineno + ':' + column + ': ' + msg;
-		if (options.get("silent"))
-		{
-			errorsList.push(err);
-            return null;
-		}
-		else
-		{
-			return err;
-		}
-	}
-
-	/**
-	 * Parse stylesheet.
-	 */
-
-	private function stylesheet():StringMap<Dynamic>
-	{
-		var rulesList:Array<StringMap<Dynamic>> = rules();
-        
-        var _stylesheet:StringMap<Dynamic> = [
-				"rules" => rulesList,
-				"parsingErrors" => errorsList	
-			];
-		var ret:StringMap<Dynamic> =[
-			"type" => 'stylesheet',
-			"stylesheet" => _stylesheet
-		];
 		
 		return ret;
 	}
-
-	/**
-	* Opening brace.
-	*/
-
-	private function open():String
+	
+  /*
+      Finds styles that have given selector, compress them,
+      and returns them
+  */
+	public function findBySelector(objectArray:Array<StringMap<Dynamic>>, selector:String, contains:Bool == false):Array<StringMap<Dynamic>>
 	{
-		return match(~/{\s*/);
-	}
-
-	/**
-	 * Closing brace.
-	 */
-
-	private function close():String
-	{
-		return match(~/}/);
-	}
-
-	/**
-	 * Parse ruleset.
-	 */
-
-	private function rules():Array<StringMap<Dynamic>>
-	{
-		var node:StringMap<Dynamic> = atrule();
-
-		if(atrule() == null){
-			node = rule();
-		}
 		
-		var rules:Array<StringMap<Dynamic>> = [];
-		whitespace();
-		comments(rules);
-		if (css.charAt(0) != '}')
-		{
-			if (node != null){
-				
-				rules.push(node);
-				comments(rules);
-			}
-		}
-		return rules;
-	}
-
-	/**
-	 * Update lineno and column based on `str`.
-	 */
-	private function updatePosition(str:String)
-	{
-		var re = ~/\n/g;
-		var lines:String = null;
-		if (re.match(str))
-		{
-			lines = re.matched(0);
-		}
-		if (lines != null)
-		{
-			lineno += lines.length;
-
-		};
-		var i = str.lastIndexOf('\n');
-		column = ~i !=0 ? str.length - i : column + str.length;
-	}
-	
-	/**
-	 * Trim `str`.
-	 */
-
-	private function trim(str:String):String 
-	{
-		return ~/^\s+|\s+$/g.replace(str, '');
-	}
-	
-	
-	public static function addParent(obj:Dynamic, ?parent:StringMap<Dynamic>):Dynamic{
-
-		var isNode:Bool = obj != null;
-		if (Std.is(obj, StringMap) == false){
-			isNode = false;
-		}else if (obj != null && Std.is(obj, StringMap)){
-			var obj = cast(obj, StringMap<Dynamic>);
-			if(obj.exists("type"))
-				isNode = true;
-				if (obj.get("type") == "stylesheet"){
-					return obj;
+		var found:Array<StringMap<Dynamic>> = [];
+		
+		for(i in 0...objectArray.length){
+			if(contains == false){
+				if(objectArray[i].get("selector") == selector){
+					found.push(objectArray[i]);
 				}
+			}else{
+				if(cast(objectArray[i].get("selector"), String).indexOf(selector) != -1){
+					found.push(objectArray[i]);
+				}
+			}
 		}
-
-		var childParent = isNode != false ? obj : parent;
-		if (Std.is(obj, StringMap)){
-			var obj = cast(obj, StringMap<Dynamic>);
-			for (key in obj.iterator()){
-							
-					var value = obj.get(key);
-					
-					if(Std.is(value, Array)){
-						var _value:Array<Dynamic> = value;
-						
-						for (i in 0..._value.length){
-							var v = _value[i];
-							Parser.addParent(v, childParent);	
-						}
-					}else if(value != null && Std.is(value, StringMap)){
-						Parser.addParent(value, childParent);
-					}
-					//trace(obj);
+		
+		if (selector == '@imports' || found.length < 2){
+			return found;
+			
+		}else{
+			var base = found[0];
+			for (i in 0...found.length){
+				
+				this.intelligentCSSPush([base], found[i]);
 			}
 			
-			if(isNode == true && parent != null){
-				obj.set("parent", parent);
+			return [base]; //we are done!! all properties merged into base!
+		}
+	}
+	
+  /*
+    deletes cssObjects having given selector, and returns new array
+  */
+	
+	public function deleteBySelector(objectArray:Array<StringMap<Dynamic>>, selector:String):Array<StringMap<Dynamic>>
+	{
+		var ret:Array<StringMap<Dynamic>> = [];
+		for(i in 0...objectArray.length){
+			if(objectArray[i].get("selector") != selector){
+				ret.push(objectArray[i]);
+			}
+		}
+		return ret;
+	}
+	
+  /*
+      Compresses given cssObjectArray and tries to minimize
+      selector redundence.
+  */
+	  
+	
+	public function compress(objectArray:Array<StringMap<Dynamic>>):Array<StringMap<Dynamic>>
+	{
+		var compressed:Array<StringMap<Dynamic>> = [];
+		var done:StringMap<Dynamic> = new StringMap<Dynamic>();
+		
+		for(i in 0...objectArray.length){
+			var obj = objectArray[i];
+			
+			if(done.get(obj.get("selector")) == true){
+				continue;
+			}
+			
+			var found = this.findBySelector(objectArray, obj.get("selector")); //found compressed
+			if (found.length != 0) {
+				compressed = compressed.concat(found);
+				done.set("selector", true);
 			}
 		}
 		
+		return compressed;
 		
-	  	return obj;
-            
 	}
 	
-	public static function parse(css: String, options: StringMap<Dynamic>):StringMap<Dynamic> 
+  /*
+    Received 2 css objects with following structure
+      [
+        rules => [[directive =>"", value =>""], [directive =>"", value =>""], ...]
+        selector => "SOMESELECTOR"
+      ]
+    returns the changed(new,removed,updated) values on css1 parameter, on same structure
+    if two css objects are the same, then returns false
+      if a css directive exists in css1 and     css2, and its value is different, it is included in diff
+      if a css directive exists in css1 and not css2, it is then included in diff
+      if a css directive exists in css2 but not css1, then it is deleted in css1, it would be included in diff but will be marked as type='DELETED'
+      @object css1 css object
+      @object css2 css object
+      @return diff css object contains changed values in css1 in regards to css2 see test input output in /test/data/css.js
+  */
+	  
+    public function diff(object1:StringMap<Dynamic>, object2:StringMap<Dynamic>):StringMap<Dynamic> 
 	{
-		var _css:StringMap<Dynamic> = Parser.addParent((new Parser(css, options)).stylesheet());
-		return _css;
+		if(object1.get("selector") == object2.get("selector")){
+			return null;
+		}
+		
+		//if one of them is media query return false, because diff function can not operate on media queries
+		if ((object1.get("type") == 'media' || object2.get("type") == 'media')) {
+			return null;
+		}
+		
+		var diff:StringMap<Dynamic> = [
+			"selector" => object1.get("selector"),
+			"rules" => new Array<StringMap<Dynamic>>()
+		];
+		
+		var rule1:StringMap<Dynamic> = new StringMap<Dynamic>();
+		var rule2:StringMap<Dynamic> = new StringMap<Dynamic>();
+		
+		var _length:Int = cast(object1.get("rules"), Array<Dynamic>).length;
+		var _length2:Int = cast(object2.get("rules"), Array<Dynamic>).length;
+		
+		for(i in 0..._length){
+			rule1 = cast(object1.get("rules"), Array<Dynamic>)[1];
+			 //find rule2 which has the same directive as rule1
+			rule2 = cast this.findCorrespondingRule(object2.get(rules), object1.get("directive"), object1.get("value"));
+			
+			if(rule2 == null){
+				//rule1 is a new rule in css1
+				cast(diff.get("rules"), Array<Dynamic>)).push(rule1);
+			}else{
+				//rule2 was found only push if its value is different too
+				if (rule1.get("value") !== rule2.get("value")) {
+				  cast(diff.get("rules"), Array<Dynamic>)).push(rule1);
+				}
+			}
+		}
+		
+		//now for rules exists in css2 but not in css1, which means deleted rules
+		
+		for(i in 0..._length2){
+			rule2 = cast(object1.get("rules"), Array<Dynamic>)[1];
+			//find rule1 which has the same directive as rule1
+			rule1 = this.findCorrespondingRule(object1.get(rules), object2.get("directive"));
+			
+			  if (rule1 == null) {
+				//rule1 is a new rule
+				rule2.set("type", 'DELETED'); //mark it as a deleted rule, so that other merge operations could be true
+				cast(diff.get("rules"), Array<Dynamic>)).push(rule2);
+			  }			
+		}
+		
+		if (cast(diff.get("rules"), Array<Dynamic>)).length == 0) {
+		  return null;
+		}
+		return diff;		
+		
+	}
+	
+	
+  /*
+      Merges 2 different css objects together
+      using intelligentCSSPush,
+      @param cssObjectArray, target css object array
+      @param newArray, source array that will be pushed into cssObjectArray parameter
+      @param reverse, [optional], if given true, first parameter will be traversed on reversed order
+              effectively giving priority to the styles in newArray
+  */
+			  
+	public function intelligentMerge(objectArray:Array<StringMap<Dynamic>>, newArray:Array<StringMap<Dynamic>>, reverse:Bool = false):Void
+	{
+		for (i in 0...newArray.length) {
+		  this.intelligentCSSPush(objectArray, newArray[i], reverse);
+		}
+		for (i in 0...objectArray.length) {
+		  var cobj:StringMap<Dynamic> = objectArray[i];
+		  if (cobj.get("type") == 'media' || (cobj.get("type") == 'keyframes')) {
+			continue;
+		  }
+		  cobj.set("rules", this.compactRules(cobj.get("rules")));
+		}		
+	}
+	
+	
+  /*
+    inserts new css objects into a bigger css object
+    with same selectors grouped together
+    @param cssObjectArray, array of bigger css object to be pushed into
+    @param minimalObject, single css object
+    @param reverse [optional] default is false, if given, cssObjectArray will be reversly traversed
+            resulting more priority in minimalObject's styles
+  */
+	
+	public function intelligentCSSPush(objectArray:Array<StringMap<Dynamic>>, minimalObject:StringMap<Dynamic>, reverse:Bool = false):Void
+	{
+		var pushSelector = minimalObject.get("selector");
+		//find correct selector if not found just push minimalObject into cssObject
+		var cssObject:StringMap<Dynamic> = null;
+		if (reverse == false) {
+		  for (i in 0...objectArray.length) {
+			if (objectArray[i].get("selector") == minimalObject.get("selector")) {
+			  cssObject = objectArray[i];
+			  break;
+			}
+		  }
+		} else {
+		  var j = objectArray.length - 1;	
+		  while (j > -1) {
+			if (cssObjectArray[j].get("selector") == minimalObject.get("selector")) {
+			  cssObject = objectArray[j];
+			  break;
+			}
+			j--;
+		  }
+		}
+		if (cssObject == null) {
+		  objectArray.push(minimalObject); //just push, because cssSelector is new
+		} else {
+		  if (minimalObject.get("type") != 'media') {
+			var mRules:Array<StringMap<Dynamic>> = cast minimalObject.get("rules");  
+			for (i in 0...length) {
+			  var rule:StringMap<Dynamic> = mRules[i];
+			  //find rule inside cssObject
+			  var oldRule = this.findCorrespondingRule(cssObject.get("rules"), rule.get("directive"));
+			  if (oldRule == null) {
+				var cRules:Array<StringMap<Dynamic>> = cssObject.get("rules");
+				cRules.push(rule);
+			  } else if (rule.get("type") == 'DELETED') {
+				oldRule.set("type", 'DELETED');
+			  } else {
+				//rule found just update value
 
+				oldRule.set("value", rule.get("value"));
+			  }
+			}
+		  } else {
+			cssObject.set("value",  cast(cssObject.get("subStyles"), Array<Dynamic>).concat(minimalObject.get("subStyles"))); //TODO, make this intelligent too
+		  }
+
+		}		
+	}
+	
+  /*
+    filter outs rule objects whose type param equal to DELETED
+    @param rules, array of rules
+    @returns rules array, compacted by deleting all unnecessary rules
+  */
+	public function compactRules(rules:Array<StringMap<Dynamic>>):Array<StringMap<Dynamic>>
+	{
+		var newRules:Array<StringMap<Dynamic>> = [];
+		for(i in 0...rules.length){
+		  if (rules[i].get("type") != 'DELETED') {
+			newRules.push(rules[i]);
+		  }			
+		}
+		
+		return newRules;
+		
+	}
+	
+		/**
+		 * Get Imports
+		 * 
+		 */
+	public function getImports(objectArray:Array<StringMap<Dynamic>>):Array<Dynamic>{
+		var imps = [];
+		for (i in 0...objectArray.length) {
+		  if (objectArray[i].get("type") == 'imports') {
+			imps.push(objectArray[i].get("styles"));
+		  }
+		}
+		return imps;		
+	}
+  
+  /*
+    Parses given css string, and returns css object
+    keys as selectors and values are css rules
+    eliminates all css comments before parsing
+    @param source css string to be parsed
+    @return object css
+  */  
+	public function parse():StringMap<Dynamic> 
+	{
+		if (this.source == null) {
+		  return null;
+		}	
+		
+		var css = new StringMap<Dynamic>();
+		//get import statements
+		
+		while (true) {
+			var m:Bool = this.importRegex.match(this.source);
+			var val:String = null;
+			if(m){
+				val = this.importRegex.matched(0);
+			}
+			var imports = val;
+			if (imports != null) {
+				this.importStatements.push(imports);
+				css.push([
+				  "selector" => '@imports',
+				  "type" => 'imports',
+				  "styles" => imports
+				]);
+			} else {
+				break;
+			}
+		}
+		
+		this.source = importRegex.replace(this.source, '');
+		
+		//get keyframe statements
+		
+		var keyframesRegex = new EReg(this.keyframeRegex, 'gi');
+		
+		var arr;
+		
+		//var _css:StringMap<Dynamic> = Parser.addParent((new Parser(css.trim(), options)).stylesheet());
+		return css;
 	}
 	
 	
@@ -760,6 +479,7 @@ class Position
 		map.set("source", this.source);
 		map.set("start", this.start);
 		map.set("end", this.end);
+		//map.set("content", this.content.trim());
 		
 		return map;
 	}

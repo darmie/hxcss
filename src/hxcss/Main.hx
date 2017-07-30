@@ -12,7 +12,14 @@ class Main
 
 	static function main()
 	{
-		var cssString = "body {background: #eee;color: #888;}"; //"foo,bar,baz{color:'black';}";
+		var cssString = 'body {
+							name: "tobi";
+							age: 2;	
+						}
+						loki {
+						  name: "loki";
+						  age: 1;
+						}';
 		var AST = Parser.parse(cssString, ["source" => 'foobar.css']);
 		trace(AST);
 	}
